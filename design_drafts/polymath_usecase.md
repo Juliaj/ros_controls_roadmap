@@ -21,19 +21,19 @@ Fleet context: articulated vehicles/tractors with two rigid bodies connected by 
 
 ### Design Iterations
 
+<img src="images/polymath_design_requirements.png" alt="Polymath Design Requirements" style="max-width: 600px; width: 100%; height: auto;" />
+
 Polymath Robotics evaluated ros2_control frameworks and ran into several challenges. Mapping diverse vehicles to specific hardware interfaces and incorporating braking and steering logic into various controllers became too complex. Additional factors — kinematics for articulation, the cognitive load of ros2_control configuration, and protective-stop integration — led them to their own design. 
 
-![Polymath Design](images/polymath_design.png)
+<img src="images/polymath_design.png" alt="Polymath Design" style="max-width: 600px; width: 100%; height: auto;" />
 
-The design connects a hardware system (e.g., bicycle) to a ROS2 Control System via a MINI BUS. Command velocity drives throttle, brake, and steering. The ROS2 side runs a Controller Impl (differential drive and autonomous), Steering PID, and Joint State Broadcaster, using speed and steering-angle feedback from hardware and publishing odometry and joint states. Safety: the hardware can disable the ROS2 Control System on bad state, and an emergency stop disables odometry output.
-
-MINI BUS: Polymath-specific software abstraction for the interface between vehicle hardware (actuators, sensors) and the control layer. It carries commands (throttle, brake, steering) to the hardware and feedback (speed, steering angle) back to the controller. Clarification: does it sit on top of a standard protocol such as CAN, or is it purely a logical interface?
+Polymath uses CAN with socketcan as interface. They then parse the CAN messages in a layer that converts them into useful information. That layer then gets read into whoever needs it, such as a hardware system, or directly into the polymath driver structure.
 
 ### Kinematics & Control to Vehicle
 
 The pipeline to generate the twist odometry is: **Hardware sensors → kinematics math → ROS2 Odometry/Twist topic**
 
-![kinematics to control](images/polymath_kinematics_to_control.png)
+<img src="images/polymath_kinematics_to_control.png" alt="kinematics to control" style="max-width: 600px; width: 100%; height: auto;" />
 
 - Kinematics acts as the translation layer — The articulated vehicle footprint plot shows that a raw cmd_vel (linear + angular velocity) must be turned into the actual steering and drive commands the vehicle needs, based on how far the joint is bent and how fast it's moving. A single velocity command produces very different vehicle footprints(motion trajectories) depending on steering state.
 
@@ -44,6 +44,11 @@ The pipeline to generate the twist odometry is: **Hardware sensors → kinematic
 A diagram from the presentation shows three curves: at a given articulation angle, angular velocity depends strongly on forward speed. This leads to several design implications — for example, accounting for steering rate (γ̇) in the twist estimate to avoid localization drift, and modeling the lag between commanded steering and actual geometry due to rotational inertia at the articulation joint.
 
 This is more complex than a standard differential-drive robot where `ω = v/r`. Here, angular velocity is a **non-linear function of geometry, speed, and the derivative of the steering state** which may be why Polymath built a dedicated kinematics layer rather than relying on a generic ROS2 diff-drive controller.
+
+
+Note from Polymath:
+
+> Articulation does not align directly with a bicycle steering controller as it has different kinematics and includes an extra term for articulation rate.
 
 ## Configuration Challenges
 
@@ -78,11 +83,32 @@ A protective stop system is designed to be a preventative measure that initiates
 
 - Regarding the Polymath design statement: "Safety: the hardware can disable the ROS2 Control System on bad state, and an emergency stop disables odometry output." What does this entail?
 
+Note from Polymath: 
+
+>This refers to when a vehicle is in some sort of non-operational mode. Examples could be emergency stops, faulted states, human only modes which we have to take control from. In all of these, we don't want any controllers to send commands. We ESPECIALLY don't want wind up, even to the limits, because on taking back control it'll max out its command and shoot in some direction.
+
 - Is it true that Polymath uses only the PID from control_toolbox?
+
+Note from Polymath:
+
+>We are using PID and PIDRos. We have used the other parts of the library before as well such as the lowpass filter. 
+>For some of our vehicles we are still using ROS 2 Control but are currently transitioning to our internal version currently.But we plan to keep using PID and PID Ros."
+
 
 - Regarding: "For multi-joint control interfacing with other libraries they will keep using it, but break out the interfaces." Are there examples?
 
+Note from Polymath:
+
+> Yes! We are using MoveIt to control what is effectively a multi-joint crane doing some work in a metal facility. We don't plan to move away from ros2 control and moveit for this application."
+
 - Are there features in ros2_control or ros2_controllers that could reduce complexity (e.g., features under control_toolbox)?
+
+Note from Polymath:
+
+> This is a hard question, some of it is structural. The problem is that to add something like a fault clear we have to add a controller + a hardware interface that does clearing.  For handling a pstop, similar but it needs a controller that outputs zero cmd_vels into the cascade for the kinematic controllers. Ideally we also reset the PID windup to 0 too. And the maintenance of all the specific pieces is a lot.
+
+> We are also on humble so a lot of the controllers don't yet have the ability to cascade.
+
 
 ## Polymath Open Source Projects
 
